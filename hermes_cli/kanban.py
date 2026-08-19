@@ -81,6 +81,8 @@ def _task_to_dict(t: kb.Task) -> dict[str, Any]:
         "session_id": t.session_id,
         "workflow_template_id": t.workflow_template_id,
         "current_step_key": t.current_step_key,
+        "idempotency_key": t.idempotency_key,
+        "block_kind": t.block_kind,
     }
 
 
@@ -652,6 +654,17 @@ def build_parser(parent_subparsers: argparse._SubParsersAction) -> argparse.Argu
         "--reason",
         default=None,
         help="Optional reason/note — recorded as a comment before unblocking. Quote multi-word reasons.",
+    )
+    p_unblock.add_argument(
+        "--resolve",
+        action="store_true",
+        help=(
+            "Mark the blocking cause as resolved: clears block_kind and the "
+            "same-cause recurrence counter. For unblockers that only act on "
+            "NEW information (e.g. an automation that unblocks strictly "
+            "after a human answered), where the loop-breaker's amnesia "
+            "protection does not apply. A bare unblock keeps the counter."
+        ),
     )
     p_unblock.add_argument("task_ids", nargs="+")
 
@@ -2407,7 +2420,7 @@ def _cmd_unblock(args: argparse.Namespace) -> int:
         for tid in ids:
             if reason:
                 kb.add_comment(conn, tid, author, f"UNBLOCK: {reason}")
-            if not kb.unblock_task(conn, tid):
+            if not kb.unblock_task(conn, tid, resolve=getattr(args, "resolve", False)):
                 failed.append(tid)
                 print(f"cannot unblock {tid} (not blocked/scheduled?)", file=sys.stderr)
             else:

@@ -6887,7 +6887,7 @@ def _landing_status_after_parents(conn: sqlite3.Connection, task_id: str) -> str
     return "todo" if undone_parents else "ready"
 
 
-def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
+def unblock_task(conn: sqlite3.Connection, task_id: str, resolve: bool = False) -> bool:
     """Transition ``blocked``/``scheduled`` to its safe resumable phase.
 
     Defensively closes any stale ``current_run_id`` pointer before flipping
@@ -6929,12 +6929,26 @@ def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
         # (the *dispatcher* spawn/crash/timeout counter — a different signal) is
         # still reset here, which is correct: a deliberate unblock is a fresh
         # start for the dispatcher's retry budget.
-        cur = conn.execute(
-            "UPDATE tasks SET status = ?, current_run_id = NULL, "
-            "consecutive_failures = 0, last_failure_error = NULL "
-            "WHERE id = ? AND status IN ('blocked', 'scheduled')",
-            (new_status, task_id),
-        )
+        if resolve:
+            # The caller vouches the blocking cause is gone (it unblocks only
+            # on new information, e.g. after a human answered a question), so
+            # the same-cause loop-breaker state is cleared with the block.
+            # The bare unblock below keeps it — that amnesia is exactly what
+            # let cron unblock loops run unbounded (see the NOTE above).
+            cur = conn.execute(
+                "UPDATE tasks SET status = ?, current_run_id = NULL, "
+                "consecutive_failures = 0, last_failure_error = NULL, "
+                "block_kind = NULL, block_recurrences = 0 "
+                "WHERE id = ? AND status IN ('blocked', 'scheduled')",
+                (new_status, task_id),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE tasks SET status = ?, current_run_id = NULL, "
+                "consecutive_failures = 0, last_failure_error = NULL "
+                "WHERE id = ? AND status IN ('blocked', 'scheduled')",
+                (new_status, task_id),
+            )
         if cur.rowcount != 1:
             return False
         _append_event(
